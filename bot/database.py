@@ -11,6 +11,32 @@ MIGRATIONS = Path(__file__).with_name("migrations")
 MIGRATION_LOCK = 0x74696174696E79
 
 
+def configuration_error_reason(error: asyncpg.ClientConfigurationError) -> str:
+    # asyncpg's raw messages can contain URI values or certificate paths. Match
+    # its known error templates and emit fixed text instead of those values.
+    message = str(error)
+    reasons = (
+        ("`sslmode` parameter", "invalid sslmode in DATABASE_URL or PGSSLMODE; accepted values are disable, allow, prefer, require, verify-ca, verify-full"),
+        ("root certificate file", "CA certificate file is missing or unreadable; check PGSSLROOTCERT and any sslrootcert option in DATABASE_URL (the URL option takes precedence)"),
+        ("cannot determine location of user PostgreSQL", "cannot locate the PostgreSQL certificate directory; set PGSSLROOTCERT to a readable CA certificate file"),
+        ("`sslnegotiation` parameter", "invalid sslnegotiation in DATABASE_URL or PGSSLNEGOTIATION; accepted values are postgres and direct"),
+        ("Unsupported TLS version:", "unsupported TLS version in ssl_min_protocol_version or ssl_max_protocol_version"),
+        ("No such TLS version:", "invalid TLS version in ssl_min_protocol_version or ssl_max_protocol_version"),
+        ("invalid IPv6 address", "invalid IPv6 host in DATABASE_URL; copy the complete PostgreSQL URI again"),
+        ("could not match", "the numbers of database hosts and ports do not match; copy the complete PostgreSQL URI again"),
+        ("invalid DSN:", "DATABASE_URL must start with postgresql:// or postgres://"),
+        ("could not determine user name", "database username is missing from DATABASE_URL"),
+        ("could not determine database name", "database name is missing from DATABASE_URL"),
+        ("server_settings is expected", "the bot's database server_settings must contain string keys and values"),
+        ("target_session_attrs is expected", "invalid target_session_attrs in DATABASE_URL or PGTARGETSESSIONATTRS"),
+        ("gsslib parameter", "invalid gsslib in DATABASE_URL or PGGSSLIB; accepted values are gssapi and sspi"),
+    )
+    for prefix, reason in reasons:
+        if message.startswith(prefix):
+            return reason
+    return "unrecognized database configuration error; recheck DATABASE_URL and PostgreSQL runtime variables"
+
+
 class PrefixStore:
     def __init__(self, database_url: str, default_prefix: str = ".") -> None:
         self._database_url = database_url
@@ -45,8 +71,11 @@ class PrefixStore:
                             )
                     rows = await connection.fetch("SELECT guild_id, prefix FROM guild_settings")
                 self._prefixes = {row["guild_id"]: row["prefix"] for row in rows}
-        except BaseException:
-            log.error("database setup failed; check DATABASE_URL and the database status")
+        except BaseException as error:
+            if isinstance(error, asyncpg.ClientConfigurationError):
+                log.error("database configuration error: %s", configuration_error_reason(error))
+            elif not isinstance(error, asyncio.CancelledError):
+                log.error("database setup failed (%s); check DATABASE_URL and the database status", type(error).__name__)
             await self.close()
             raise
         log.info("database ready")
