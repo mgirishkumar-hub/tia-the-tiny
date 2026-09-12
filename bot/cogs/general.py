@@ -1,8 +1,12 @@
+import logging
+
 import discord
 from discord.ext import commands
 
 from bot.app import TiaBot
 from bot.config import valid_prefix
+
+log = logging.getLogger("tia")
 
 
 class General(commands.Cog):
@@ -30,7 +34,12 @@ class General(commands.Cog):
             await ctx.send("use 1 to 5 simple characters, without spaces or mentions.")
             return
         await self.bot.prefixes.set(ctx.guild.id, new_prefix)
-        await ctx.send(f"prefix set to `{new_prefix}`")
+        try:
+            await ctx.send(f"prefix set to `{new_prefix}`")
+        except Exception as error:
+            # The database write already succeeded. A reply failure must not undo it
+            # or tell the user that their prefix was not saved.
+            log.warning("prefix saved, but its confirmation failed (%s)", type(error).__name__)
 
 
 async def setup(bot: TiaBot) -> None:

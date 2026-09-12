@@ -1,6 +1,10 @@
 from unittest.mock import AsyncMock
+from types import SimpleNamespace
 
+import discord
+from aiohttp import ServerDisconnectedError
 import pytest
+from discord.ext import commands
 
 
 async def test_only_requested_commands_exist(chat):
@@ -73,3 +77,18 @@ async def test_ordinary_chat_unknown_commands_bots_webhooks_and_dms_are_ignored(
     assert await say(".drunk", bot_author=True) == []
     assert await say(".drunk", webhook=True) == []
     assert await say(".drunk", guild_id=None) == []
+
+
+@pytest.mark.parametrize("failure", [
+    discord.HTTPException(SimpleNamespace(status=503, reason="Unavailable"), "unavailable"),
+    TimeoutError(),
+    ConnectionResetError(),
+    ServerDisconnectedError(),
+])
+async def test_confirmation_failure_does_not_claim_the_prefix_was_not_saved(chat, monkeypatch, failure):
+    bot, say = chat
+    send = AsyncMock(side_effect=[failure, None])
+    monkeypatch.setattr(commands.Context, "send", send)
+    await say(".prefix set !", manage_server=True)
+    assert bot.prefixes.get(1234) == "!"
+    assert send.await_count == 1
